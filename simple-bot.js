@@ -1,4 +1,4 @@
-const mysql = require('mysql2/promise');
+const { Pool } = require('pg');
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const token = process.env.BOT_TOKEN;
@@ -18,14 +18,13 @@ bot.setMyCommands([
 ]);
 
 // Создание пула соединений
-const pool = mysql.createPool({
+const pool = new Pool({
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+  port: 5432, 
+  ssl: true 
 });
 
 // Хранилище для временных медиа групп (ключ: userId_mediaGroupId)
@@ -49,7 +48,7 @@ function sendMessageWithKeyboard(chatId, text, buttons, messageId = null) {
 
 // Функция для получения состояния пользователя из базы данных
 async function getUserState(chatId) {
-  const [rows] = await pool.query('SELECT * FROM posts WHERE user_chat_id = ?', [chatId]);
+  const { rows } = await pool.query('SELECT * FROM posts WHERE user_chat_id = $1', [chatId]);
   return rows.map(row => ({
     ...row,
     photos: row.photos ? JSON.parse(row.photos) : [],
@@ -60,42 +59,30 @@ async function getUserState(chatId) {
 
 // Функция для сохранения состояния пользователя в базе данных
 async function saveUserState(chatId, post) {
-  const connection = await pool.getConnection();
-  try {
-    await connection.beginTransaction();
-    await connection.query(
-      `INSERT INTO posts (id, user_chat_id, stage, photos, description, username, photos_finished)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE
-       stage = VALUES(stage),
-       photos = VALUES(photos),
-       description = VALUES(description),
-       username = VALUES(username),
-       photos_finished = VALUES(photos_finished)`,
-      [
-        post.id,
-        chatId,
-        post.stage,
-        JSON.stringify(post.photos),
-        post.description,
-        post.username,
-        post.photosFinished
-      ]
-    );
-    await connection.commit();
-  } catch (error) {
-    await connection.rollback();
-    console.error('Error saving user state for chatId ' + chatId, error);
-    throw error;
-  } finally {
-    connection.release();
-  }
+  await pool.query(
+    `INSERT INTO posts (user_chat_id, stage, photos, description, username, photos_finished)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (user_chat_id) DO UPDATE SET
+       stage = EXCLUDED.stage,
+       photos = EXCLUDED.photos,
+       description = EXCLUDED.description,
+       username = EXCLUDED.username,
+       photos_finished = EXCLUDED.photos_finished`,
+    [
+      chatId,
+      post.stage,
+      JSON.stringify(post.photos),
+      post.description,
+      post.username,
+      post.photosFinished
+    ]
+  );
 }
 
 // Функция для проверки активного поста
 async function hasActivePost(chatId) {
-  const [rows] = await pool.query(
-    'SELECT * FROM posts WHERE user_chat_id = ? AND stage NOT IN (?)',
+  const { rows } = await pool.query(
+    'SELECT * FROM posts WHERE user_chat_id = $1 AND stage NOT IN ($2)',
     [chatId, 'published']
   );
   return rows.length > 0;
@@ -116,8 +103,8 @@ bot.onText(/\/start/, async (msg) => {
     return;
   }
 
-  await pool.query('INSERT INTO users (chat_id, username) VALUES (?, ?) ON DUPLICATE KEY UPDATE username = ?', 
-    [chatId, msg.from.username, msg.from.username]);
+  await pool.query('INSERT INTO users (chat_id, username) VALUES ($1, $2) ON CONFLICT (chat_id) DO UPDATE SET username = EXCLUDED.username', 
+    [chatId, msg.from.username]);
 
   const menuButtons = [
     { text: '📝 Створити оголошення', callback_data: 'create_post' },
@@ -146,7 +133,6 @@ bot.on('callback_query', async (query) => {
       return;
     }
 
-    const postId = Date.now();
     const username = query.from.username 
       ? `@${query.from.username}`
       : query.from.first_name 
@@ -154,7 +140,6 @@ bot.on('callback_query', async (query) => {
       : 'Невідомий користувач';
 
     const newPost = {
-      id: postId,
       stage: AWAITING_DESCRIPTION,
       photos: [],
       description: '',
