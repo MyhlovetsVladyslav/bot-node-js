@@ -4,6 +4,9 @@ const TelegramBot = require('node-telegram-bot-api');
 const token = process.env.BOT_TOKEN;
 const channelId = process.env.CHANNEL_ID;
 const bot = new TelegramBot(token, { polling: true });
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
 
 const AWAITING_DESCRIPTION = 'awaiting_description';
 const AWAITING_PHOTOS = 'awaiting_photos';
@@ -306,3 +309,6 @@ bot.on('callback_query', async (query) => {
     }
   }
 });
+
+app.get('/', (req, res) => res.send('Bot is running!'));
+app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
