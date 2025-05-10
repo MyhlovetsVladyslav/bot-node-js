@@ -6,7 +6,7 @@ const channelId = process.env.CHANNEL_ID;
 const bot = new TelegramBot(token, { polling: true });
 const express = require('express');
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 
 const AWAITING_DESCRIPTION = 'awaiting_description';
 const AWAITING_PHOTOS = 'awaiting_photos';
