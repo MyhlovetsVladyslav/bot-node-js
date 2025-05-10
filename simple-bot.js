@@ -64,13 +64,7 @@ async function getUserState(chatId) {
 async function saveUserState(chatId, post) {
   await pool.query(
     `INSERT INTO posts (user_chat_id, stage, photos, description, username, photos_finished)
-     VALUES ($1, $2, $3, $4, $5, $6)
-     ON CONFLICT (user_chat_id) DO UPDATE SET
-       stage = EXCLUDED.stage,
-       photos = EXCLUDED.photos,
-       description = EXCLUDED.description,
-       username = EXCLUDED.username,
-       photos_finished = EXCLUDED.photos_finished`,
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     [
       chatId,
       post.stage,
