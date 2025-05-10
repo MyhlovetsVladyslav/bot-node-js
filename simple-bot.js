@@ -15,6 +15,8 @@ const AWAITING_PHOTOS = 'awaiting_photos';
 const MIN_WORDS = 10;
 const MAX_WORDS = 500;
 const MAX_PHOTOS = 4;
+const MAX_POST_AGE_MINUTES = 1// например, 60 минут
+
 // Установка команд бота
 bot.setMyCommands([
   { command: '/start', description: 'Почати роботу з ботом' },
@@ -32,6 +34,8 @@ const pool = new Pool({
 
 // Хранилище для временных медиа групп (ключ: userId_mediaGroupId)
 const mediaGroups = new Map();
+
+const userCurrentPost = new Map(); // chatId -> postId
 
 function sendMessageWithKeyboard(chatId, text, buttons, messageId = null) {
   const keyboard = { inline_keyboard: buttons.map(button => [{ text: button.text, callback_data: button.callback_data }]) };
@@ -51,28 +55,25 @@ function sendMessageWithKeyboard(chatId, text, buttons, messageId = null) {
 
 // Функция для получения состояния пользователя из базы данных
 async function getUserState(chatId) {
-  const { rows } = await pool.query('SELECT * FROM posts WHERE user_chat_id = $1', [chatId]);
-  return rows.map(row => ({
-    ...row,
-    photos: row.photos ? JSON.parse(row.photos) : [],
-    priceText: row.price_text,
-    username: row.username
-  }));
+  const postId = userCurrentPost.get(chatId);
+  const { rows } = await pool.query('SELECT * FROM posts WHERE id = $1', [postId]);
+  const currentPost = rows[0];
+  if (!currentPost) return null;
+
+  return {
+    ...currentPost,
+    photos: currentPost.photos ? JSON.parse(currentPost.photos) : [],
+    priceText: currentPost.price_text,
+    username: currentPost.username
+  };
 }
 
 // Функция для сохранения состояния пользователя в базе данных
 async function saveUserState(chatId, post) {
+  const postId = userCurrentPost.get(chatId);
   await pool.query(
-    `INSERT INTO posts (user_chat_id, stage, photos, description, username, photos_finished)
-     VALUES ($1, $2, $3, $4, $5, $6)`,
-    [
-      chatId,
-      post.stage,
-      JSON.stringify(post.photos),
-      post.description,
-      post.username,
-      post.photosFinished
-    ]
+    `UPDATE posts SET description = $1, stage = $2, photos = $3 WHERE id = $4`,
+    [post.description, post.stage, JSON.stringify(post.photos), postId]
   );
 }
 
@@ -136,15 +137,22 @@ bot.on('callback_query', async (query) => {
       ? `${query.from.first_name}${query.from.last_name ? ' ' + query.from.last_name : ''}` 
       : 'Невідомий користувач';
 
-    const newPost = {
+    const result = await pool.query(
+      `INSERT INTO posts (user_chat_id, stage, photos, description, username, photos_finished)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [chatId, AWAITING_DESCRIPTION, '[]', '', username, false]
+    );
+    const postId = result.rows[0].id;
+    userCurrentPost.set(chatId, postId);
+
+    await saveUserState(chatId, {
       stage: AWAITING_DESCRIPTION,
       photos: [],
       description: '',
       username,
       photosFinished: false
-    };
-
-    await saveUserState(chatId, newPost);
+    });
     await bot.editMessageText('📝 Будь ласка, надішліть опис для вашого оголошення:\n\n💡 Опишіть товар, його стан, ціну та умови продажу.', {
       chat_id: chatId,
       message_id: messageId
@@ -170,7 +178,7 @@ bot.on('text', async (msg) => {
   if (msg.text.startsWith('/')) return;
 
   const userState = await getUserState(chatId);
-  const currentPost = userState[userState.length - 1];
+  const currentPost = userState;
   
   if (currentPost && currentPost.stage === AWAITING_DESCRIPTION) {
     const validationError = validateDescription(msg.text);
@@ -199,7 +207,7 @@ bot.on('text', async (msg) => {
 bot.on('photo', async (msg) => {
   const chatId = msg.chat.id;
   const userState = await getUserState(chatId);
-  const currentPost = userState[userState.length - 1];
+  const currentPost = userState;
 
   if (!currentPost || currentPost.stage !== AWAITING_PHOTOS) return;
 
@@ -276,7 +284,7 @@ bot.on('callback_query', async (query) => {
   if (query.data === 'finish_photos') {
     const chatId = query.message.chat.id;
     const userState = await getUserState(chatId);
-    const currentPost = userState[userState.length - 1];
+    const currentPost = userState;
 
     if (currentPost && currentPost.stage === AWAITING_PHOTOS) {
       if (currentPost.photos.length === 0) {
@@ -303,6 +311,31 @@ bot.on('callback_query', async (query) => {
     }
   }
 });
+
+// Периодическая очистка просроченных постов
+setInterval(async () => {
+  try {
+    const { rows } = await pool.query(
+      `DELETE FROM posts
+       WHERE stage != 'published'
+         AND created_at < NOW() - INTERVAL '${MAX_POST_AGE_MINUTES} minutes'
+       RETURNING id, user_chat_id`
+    );
+    for (const row of rows) {
+      userCurrentPost.delete(row.user_chat_id);
+      // Отправляем уведомление пользователю
+      await bot.sendMessage(
+        row.user_chat_id,
+        '⏰ Ваше оголошення було автоматично видалено через неактивність. Будь ласка, створіть нове оголошення, якщо це потрібно \n\n /start'
+      );
+    }
+    if (rows.length > 0) {
+      console.log(`Автоматически удалено ${rows.length} просроченных постов`);
+    }
+  } catch (err) {
+    console.error('Ошибка при автоочистке постов:', err);
+  }
+}, 60 * 1000);
 
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
