@@ -12,14 +12,15 @@ const AWAITING_DESCRIPTION = 'awaiting_description';
 const AWAITING_PHOTOS = 'awaiting_photos';
 
 // Validation constants
-const MIN_WORDS = 10;
+const MIN_WORDS = 5;
 const MAX_WORDS = 500;
-const MAX_PHOTOS = 4;
-const MAX_POST_AGE_MINUTES = 1// например, 60 минут
+const MAX_PHOTOS = 8;
+const MAX_POST_AGE_MINUTES = 60 * 24; 
 
 // Установка команд бота
 bot.setMyCommands([
   { command: '/start', description: 'Почати роботу з ботом' },
+  { command: '/cancel', description: 'Скасувати створення оголошення' },
 ]);
 
 // Создание пула соединений
@@ -138,10 +139,10 @@ bot.on('callback_query', async (query) => {
       : 'Невідомий користувач';
 
     const result = await pool.query(
-      `INSERT INTO posts (user_chat_id, stage, photos, description, username, photos_finished)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO posts (user_chat_id, stage, photos, description, username)
+       VALUES ($1, $2, $3, $4, $5)
        RETURNING id`,
-      [chatId, AWAITING_DESCRIPTION, '[]', '', username, false]
+      [chatId, AWAITING_DESCRIPTION, '[]', '', username]
     );
     const postId = result.rows[0].id;
     userCurrentPost.set(chatId, postId);
@@ -153,7 +154,7 @@ bot.on('callback_query', async (query) => {
       username,
       photosFinished: false
     });
-    await bot.editMessageText('📝 Будь ласка, надішліть опис для вашого оголошення:\n\n💡 Опишіть товар, його стан, ціну та умови продажу.', {
+    await bot.editMessageText('📝 Будь ласка, надішліть опис для вашого оголошення:\n\n💡 Опишіть товар, його стан, ціну та умови продажу.\n\n❌ Щоб скасувати створення оголошення, надішліть /cancel', {
       chat_id: chatId,
       message_id: messageId
     });
@@ -330,12 +331,32 @@ setInterval(async () => {
       );
     }
     if (rows.length > 0) {
-      console.log(`Автоматически удалено ${rows.length} просроченных постов`);
+      console.log(`Автоматично удалено ${rows.length} просроченных постов`);
     }
   } catch (err) {
     console.error('Ошибка при автоочистке постов:', err);
   }
 }, 60 * 1000);
+
+bot.onText(/\/cancel/, async (msg) => {
+  const chatId = msg.chat.id;
+  const postId = userCurrentPost.get(chatId);
+
+  if (!postId) {
+    await bot.sendMessage(chatId, 'У вас немає активного оголошення для скасування.');
+    return;
+  }
+
+  // Удаляем пост из базы, если он не опубликован
+  await pool.query(
+    "DELETE FROM posts WHERE id = $1 AND stage != 'published'",
+    [postId]
+  );
+
+  userCurrentPost.delete(chatId);
+
+  await bot.sendMessage(chatId, 'Ваше оголошення скасовано. Щоб створити нове, використайте /start.');
+});
 
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
