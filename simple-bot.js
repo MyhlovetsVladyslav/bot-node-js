@@ -15,7 +15,7 @@ let bot;
 if (url) {
   // Production: use webhook, но сервер Express слушает порт!
   bot = new TelegramBot(token);
-  bot.setWebHook(`${url}/bot${token}`);
+  bot.setWebHook(`${url}/bot${token}`, { allowed_updates: ["message", "callback_query"] });
   console.log(`Webhook set to: ${url}/bot${token}`);
 } else {
   // Local: use polling
