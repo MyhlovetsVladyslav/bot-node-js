@@ -27,6 +27,7 @@ app.use(bodyParser.json());
 
 // Endpoint for Telegram webhook
 app.post(`/bot${token}`, (req, res) => {
+  console.log('Webhook POST:', req.body);
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
