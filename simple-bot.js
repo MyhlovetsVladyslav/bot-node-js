@@ -1,12 +1,44 @@
 const { Pool } = require('pg');
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
+const express = require('express');
+const bodyParser = require('body-parser');
+const app = express();
+const PORT = process.env.PORT || 3000;
+const url = process.env.RENDER_EXTERNAL_URL;
+
 const token = process.env.BOT_TOKEN;
 const channelId = process.env.CHANNEL_ID;
-const bot = new TelegramBot(token, { polling: true });
-const express = require('express');
-const app = express();
-const PORT = process.env.PORT;
+
+// --- Webhook or Polling ---
+let bot;
+if (url) {
+  // Production: use webhook
+  bot = new TelegramBot(token, { webHook: { port: PORT } });
+  bot.setWebHook(`${url}/bot${token}`);
+  console.log(`Webhook set to: ${url}/bot${token}`);
+} else {
+  // Local: use polling
+  bot = new TelegramBot(token, { polling: true });
+  console.log('Bot started in polling mode');
+}
+
+app.use(bodyParser.json());
+
+// Endpoint for Telegram webhook
+app.post(`/bot${token}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// Healthcheck endpoint
+app.get('/', (req, res) => {
+  res.send('Bot is running!');
+});
+
+app.listen(PORT, () => {
+  console.log(`Express server listening on port ${PORT}`);
+});
 
 const AWAITING_DESCRIPTION = 'awaiting_description';
 const AWAITING_PHOTOS = 'awaiting_photos';
@@ -357,6 +389,3 @@ bot.onText(/\/cancel/, async (msg) => {
 
   await bot.sendMessage(chatId, 'Ваше оголошення скасовано. Щоб створити нове, використайте /start.');
 });
-
-app.get('/', (req, res) => res.send('Bot is running!'));
-app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
