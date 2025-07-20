@@ -13,8 +13,8 @@ const channelId = process.env.CHANNEL_ID;
 // --- Webhook or Polling ---
 let bot;
 if (url) {
-  // Production: use webhook
-  bot = new TelegramBot(token, { webHook: { port: PORT } });
+  // Production: use webhook, но сервер Express слушает порт!
+  bot = new TelegramBot(token);
   bot.setWebHook(`${url}/bot${token}`);
   console.log(`Webhook set to: ${url}/bot${token}`);
 } else {
